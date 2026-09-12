@@ -6,85 +6,107 @@ import secrets
 import string
 import logging
 import base64
+import tempfile
 from pathlib import Path
+from typing import Optional
 from urllib.parse import quote
-
 from fastapi import FastAPI, WebSocket, Request
 from fastapi.responses import PlainTextResponse, Response
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger("FreeNET")
 
-DATA_DIR = Path(os.environ.get("FREENET_DATA_DIR") or "/data")
-os.environ["FREENET_DATA_DIR"] = str(DATA_DIR)
-IDENTITY_PATH = DATA_DIR / "identity.json"
-
-
 def generate_token(length: int = 24) -> str:
     alphabet = string.ascii_letters + string.digits
     return "".join(secrets.choice(alphabet) for _ in range(length))
 
+def _is_writable_dir(path: Path) -> bool:
+    try:
+        path.mkdir(parents=True, exist_ok=True)
+        probe = path / f".freenet-write-{uuid.uuid4().hex}"
+        probe.write_text("ok", encoding="utf-8")
+        probe.unlink()
+        return True
+    except Exception:
+        return False
 
-def load_or_create_identity() -> dict:
-    if not DATA_DIR.exists() or not DATA_DIR.is_dir():
-        logger.error(
-            "Data directory %s is not available. A persistent volume is required.",
-            DATA_DIR,
-        )
-        sys.exit(1)
+def _resolve_data_dir() -> Path:
+    candidates = []
+    env_dir = os.environ.get("FREENET_DATA_DIR")
+    if env_dir:
+        candidates.append(Path(env_dir))
+    candidates.append(Path("/data"))
+    candidates.append(Path(tempfile.gettempdir()) / "freenet-data")
+    try:
+        candidates.append(Path.cwd() / ".freenet-data")
+    except Exception:
+        pass
+    for candidate in candidates:
+        if _is_writable_dir(candidate):
+            return candidate
+    return Path(tempfile.gettempdir())
 
-    if IDENTITY_PATH.exists():
-        try:
-            with open(IDENTITY_PATH, "r", encoding="utf-8") as f:
-                data = json.load(f)
+DATA_DIR = _resolve_data_dir()
+DATA_DIR_WRITABLE = _is_writable_dir(DATA_DIR)
+os.environ["FREENET_DATA_DIR"] = str(DATA_DIR)
+IDENTITY_PATH = DATA_DIR / "identity.json"
 
-            if not isinstance(data, dict):
-                raise ValueError("Identity is not a JSON object")
-
-            required_keys = ("uuid", "trojan_password", "subscription_token")
-            if not all(k in data for k in required_keys):
-                raise ValueError("Missing required identity fields")
-
-            if (
-                not isinstance(data["uuid"], str)
-                or not isinstance(data["trojan_password"], str)
-                or not isinstance(data["subscription_token"], str)
-            ):
-                raise ValueError("Identity fields must be strings")
-
-            parsed_uuid = uuid.UUID(data["uuid"])
-
-            if not data["trojan_password"] or not data["subscription_token"]:
-                raise ValueError("Secrets cannot be empty")
-
-            return {
-                "uuid": str(parsed_uuid),
-                "trojan_password": data["trojan_password"],
-                "subscription_token": data["subscription_token"],
-            }
-        except Exception as e:
-            logger.error(
-                "Identity file is corrupted or invalid. Refusing to regenerate to protect existing links. Error: %s",
-                e,
-            )
-            sys.exit(1)
-
-    logger.info("Generating new identity...")
-    identity = {
+def _generate_identity() -> dict:
+    return {
         "uuid": str(uuid.uuid4()),
         "trojan_password": secrets.token_urlsafe(24),
-        "subscription_token": generate_token(24),
     }
 
+def _validate_identity(data: dict) -> dict:
+    if not isinstance(data, dict):
+        raise ValueError("Identity is not a JSON object")
+    required_keys = ("uuid", "trojan_password")
+    if not all(k in data for k in required_keys):
+        raise ValueError("Missing required identity fields")
+    if (
+        not isinstance(data["uuid"], str)
+        or not isinstance(data["trojan_password"], str)
+    ):
+        raise ValueError("Identity fields must be strings")
+    parsed_uuid = uuid.UUID(data["uuid"])
+    if not data["trojan_password"]:
+        raise ValueError("Secrets cannot be empty")
+    return {
+        "uuid": str(parsed_uuid),
+        "trojan_password": data["trojan_password"],
+    }
+
+def _env_identity() -> Optional[dict]:
+    uuid_env = os.environ.get("FREENET_UUID") or os.environ.get("VLESS_UUID")
+    trojan_env = os.environ.get("TROJAN_PASSWORD")
+
+    if not any((uuid_env, trojan_env)):
+        return None
+
+    return {
+        "uuid": uuid_env or str(uuid.uuid4()),
+        "trojan_password": trojan_env or secrets.token_urlsafe(24),
+    }
+
+def _save_identity(identity: dict) -> None:
+    if not DATA_DIR_WRITABLE:
+        logger.warning(
+            "Data directory %s is not writable. Identity will be kept in memory only.",
+            DATA_DIR,
+        )
+        return
     tmp_path = IDENTITY_PATH.with_name(IDENTITY_PATH.name + ".tmp")
     try:
         with open(tmp_path, "w", encoding="utf-8") as f:
             json.dump(identity, f, indent=2)
-        os.chmod(tmp_path, 0o600)
+        try:
+            os.chmod(tmp_path, 0o600)
+        except Exception:
+            pass
         os.replace(tmp_path, IDENTITY_PATH)
     except Exception as e:
-        logger.error(
-            "Failed to persist identity file. Refusing to start with ephemeral identity. Error: %s",
+        logger.warning(
+            "Failed to persist identity file. Continuing with in-memory identity. Error: %s",
             e,
         )
         try:
@@ -92,12 +114,44 @@ def load_or_create_identity() -> dict:
                 tmp_path.unlink()
         except Exception:
             pass
-        sys.exit(1)
 
+def load_or_create_identity() -> dict:
+    env_identity = _env_identity()
+    if env_identity:
+        try:
+            identity = _validate_identity(env_identity)
+            _save_identity(identity)
+            return identity
+        except Exception as e:
+            logger.error("Environment identity is invalid. Error: %s", e)
+
+    if IDENTITY_PATH.exists():
+        try:
+            with open(IDENTITY_PATH, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            return _validate_identity(data)
+        except Exception as e:
+            logger.error(
+                "Identity file is corrupted or invalid. Falling back to environment or new identity. Error: %s",
+                e,
+            )
+
+    identity = env_identity or _generate_identity()
+    try:
+        identity = _validate_identity(identity)
+    except Exception:
+        logger.error("Identity from environment is invalid. Generating a new identity.")
+        identity = _generate_identity()
+    _save_identity(identity)
     return identity
 
-
 IDENTITY = load_or_create_identity()
+
+SUBSCRIPTION_TOKEN = os.environ.get("SUBSCRIPTION_TOKEN")
+if not SUBSCRIPTION_TOKEN:
+    logger.error("FATAL: SUBSCRIPTION_TOKEN environment variable is not set. The program cannot start without it.")
+    sys.exit(1)
+
 os.environ["VLESS_UUID"] = IDENTITY["uuid"]
 os.environ["TROJAN_PASSWORD"] = IDENTITY["trojan_password"]
 
@@ -112,29 +166,24 @@ import core
 
 app = FastAPI(docs_url=None, redoc_url=None, openapi_url=None)
 
-
 def _uuid_matches(value: str) -> bool:
     try:
         return uuid.UUID(value) == _IDENTITY_UUID
     except Exception:
         return False
 
-
 @app.on_event("startup")
 async def startup() -> None:
-    logger.info("FreeNET started")
-    logger.info("Subscription URL: /sub/%s...", IDENTITY["subscription_token"][:4])
-
+    logger.info("FreeNET Started")
+    logger.info("Subscription URL:\nhttps://YOUR_DOMAIN/sub/%s", SUBSCRIPTION_TOKEN)
 
 @app.get("/")
 async def root():
     return PlainTextResponse("FreeNET")
 
-
 @app.get("/health")
 async def health():
     return {"status": "ok"}
-
 
 @app.websocket("/vless/{client_uuid}")
 async def ws_vless(ws: WebSocket, client_uuid: str):
@@ -143,7 +192,6 @@ async def ws_vless(ws: WebSocket, client_uuid: str):
         return
     await vless.handle(ws)
 
-
 @app.websocket("/trojan/{client_uuid}")
 async def ws_trojan(ws: WebSocket, client_uuid: str):
     if not _uuid_matches(client_uuid):
@@ -151,65 +199,52 @@ async def ws_trojan(ws: WebSocket, client_uuid: str):
         return
     await trojan.handle(ws)
 
-
 async def _handle_xhttp_request(client_uuid: str, request: Request):
     if not _uuid_matches(client_uuid):
         return Response(content="Not Found", status_code=404)
     return await xhttp.handle(request)
 
-
 @app.api_route("/xhttp/{client_uuid}", methods=["GET", "POST"])
 async def xhttp_base(client_uuid: str, request: Request):
     return await _handle_xhttp_request(client_uuid, request)
-
 
 @app.api_route("/xhttp/{client_uuid}/{path:path}", methods=["GET", "POST"])
 async def xhttp_path(client_uuid: str, request: Request):
     return await _handle_xhttp_request(client_uuid, request)
 
-
 def _extract_public_host(request: Request) -> str:
     raw = request.headers.get("x-forwarded-host")
     if not raw:
         raw = request.headers.get("host", "localhost")
-
     raw = raw.split(",", 1)[0].strip()
     if not raw:
         return "localhost"
-
     if "://" in raw:
         raw = raw.split("://", 1)[1].split("/", 1)[0]
-
     if raw.startswith("["):
         end = raw.find("]")
         if end != -1:
             return raw[1:end]
         return raw.strip("[]")
-
     if raw.count(":") == 1:
         return raw.rsplit(":", 1)[0]
-
     return raw
-
 
 def _format_url_host(host: str) -> str:
     return f"[{host}]" if ":" in host else host
 
-
 def _build_query(params: dict) -> str:
     return "&".join(f"{key}={quote(str(value))}" for key, value in params.items())
-
 
 @app.get("/sub/{token}")
 async def subscription(token: str, request: Request):
     try:
         token_valid = secrets.compare_digest(
             token.encode("utf-8"),
-            IDENTITY["subscription_token"].encode("utf-8"),
+            SUBSCRIPTION_TOKEN.encode("utf-8"),
         )
     except Exception:
         token_valid = False
-
     if not token_valid:
         return Response(content="Not Found", status_code=404)
 
@@ -279,24 +314,19 @@ async def subscription(token: str, request: Request):
 
     payload = "\n".join(links)
     encoded = base64.b64encode(payload.encode("utf-8")).decode("utf-8")
-
     headers = {
         "Subscription-Userinfo": f"upload={up_bytes}; download={down_bytes}; total=0; expire=0",
         "Profile-Title": base64.b64encode(status_text.encode("utf-8")).decode("utf-8"),
         "Cache-Control": "no-store",
     }
-
     return Response(content=encoded, media_type="text/plain", headers=headers)
-
 
 if __name__ == "__main__":
     import uvicorn
-
     try:
-        port = int(os.environ.get("PORT", "8000"))
+        port = int(os.environ.get("PORT", "8080"))
     except (TypeError, ValueError):
-        port = 8000
-
+        port = 8080
     uvicorn.run(
         "main:app",
         host="0.0.0.0",

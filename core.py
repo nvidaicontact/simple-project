@@ -1,5 +1,4 @@
 from __future__ import annotations
-
 import asyncio
 import atexit
 import inspect
@@ -25,7 +24,13 @@ __all__ = [
     "format_uptime",
 ]
 
-DATA_DIR = Path(os.environ.get("FREENET_DATA_DIR") or "/data")
+def _get_data_dir() -> Path:
+    env_dir = os.environ.get("FREENET_DATA_DIR")
+    if env_dir:
+        return Path(env_dir)
+    return Path(os.environ.get("TEMP", "/tmp")) / "freenet-data"
+
+DATA_DIR = _get_data_dir()
 STATS_PATH = DATA_DIR / "stats.json"
 
 DEFAULT_CHUNK_SIZE = 16 * 1024
@@ -34,7 +39,6 @@ STATS_FLUSH_INTERVAL = 30.0
 
 _PROCESS_START_MONOTONIC = time.monotonic()
 
-
 def _to_nonnegative_int(value: Any) -> int:
     try:
         value = int(value)
@@ -42,43 +46,33 @@ def _to_nonnegative_int(value: Any) -> int:
         return 0
     return value if value >= 0 else 0
 
-
 def format_bytes(value: int) -> str:
     try:
         value = int(value)
     except Exception:
         value = 0
-
     if value < 0:
         value = 0
-
     if value < 1024:
         return f"{value}B"
-
     scaled = float(value)
     units = ("KB", "MB", "GB", "TB", "PB", "EB")
-
     for unit in units:
         scaled /= 1024.0
         if scaled < 1024.0 or unit == units[-1]:
             return f"{scaled:.1f}{unit}"
-
     return f"{scaled:.1f}EB"
-
 
 def format_uptime(seconds: float) -> str:
     try:
         seconds = int(seconds)
     except Exception:
         seconds = 0
-
     if seconds < 0:
         seconds = 0
-
     days, remainder = divmod(seconds, 86400)
     hours, remainder = divmod(remainder, 3600)
     minutes, _ = divmod(remainder, 60)
-
     if days:
         return f"{days}d {hours:02d}h" if hours else f"{days}d"
     if hours:
@@ -87,37 +81,37 @@ def format_uptime(seconds: float) -> str:
         return f"{minutes}m"
     return "0m"
 
-
 class Stats:
     def __init__(self, path: Optional[Path] = None) -> None:
         if path is None:
             self._path = STATS_PATH
-            self._enabled = DATA_DIR.is_dir()
         else:
             self._path = Path(path)
-            self._enabled = self._path.parent.is_dir()
+
+        self._enabled = False
+        try:
+            self._path.parent.mkdir(parents=True, exist_ok=True)
+            self._enabled = True
+        except Exception:
+            self._enabled = False
 
         self._start_time = _PROCESS_START_MONOTONIC
         self.total_upload = 0
         self.total_download = 0
         self._dirty = False
         self._last_flush = time.monotonic()
-
         self._load()
         atexit.register(self.flush)
 
     def _load(self) -> None:
         if not self._enabled:
             return
-
         try:
             if not self._path.is_file():
                 return
-
             raw = json.loads(self._path.read_text(encoding="utf-8"))
             if not isinstance(raw, dict):
                 raise ValueError("Stats file is not a JSON object")
-
             self.total_upload = _to_nonnegative_int(
                 raw.get("total_upload", raw.get("upload", 0))
             )
@@ -132,7 +126,6 @@ class Stats:
     def flush(self) -> None:
         if not self._enabled:
             return
-
         tmp_path = None
         try:
             payload = {
@@ -140,12 +133,10 @@ class Stats:
                 "total_download": int(self.total_download),
                 "saved_at": int(time.time()),
             }
-
             tmp_path = self._path.with_name(self._path.name + ".tmp")
             with open(tmp_path, "w", encoding="utf-8") as f:
                 json.dump(payload, f)
                 f.flush()
-
             os.replace(tmp_path, self._path)
             self._dirty = False
             self._last_flush = time.monotonic()
@@ -169,10 +160,8 @@ class Stats:
             size = int(size)
         except Exception:
             return
-
         if size <= 0:
             return
-
         self.total_upload += size
         self._dirty = True
         self._maybe_flush()
@@ -182,10 +171,8 @@ class Stats:
             size = int(size)
         except Exception:
             return
-
         if size <= 0:
             return
-
         self.total_download += size
         self._dirty = True
         self._maybe_flush()
@@ -193,16 +180,13 @@ class Stats:
     def uptime_seconds(self) -> float:
         return max(0.0, time.monotonic() - self._start_time)
 
-
 _global_stats: Optional[Stats] = None
-
 
 def get_global_stats() -> Stats:
     global _global_stats
     if _global_stats is None:
         _global_stats = Stats()
     return _global_stats
-
 
 def get_stats() -> Dict[str, str]:
     stats = get_global_stats()
@@ -212,7 +196,6 @@ def get_stats() -> Dict[str, str]:
         "upload": format_bytes(stats.total_upload),
         "download": format_bytes(stats.total_download),
     }
-
 
 @dataclass(frozen=True)
 class Target:
@@ -224,23 +207,18 @@ class Target:
         host = str(self.host).strip()
         if not host:
             raise ValueError("Target host is required")
-
         try:
             port = int(self.port)
         except Exception as exc:
             raise ValueError("Target port is invalid") from exc
-
         if not (0 < port <= 65535):
             raise ValueError("Target port is invalid")
-
         network = str(self.network).strip().lower()
         if network != "tcp":
             raise ValueError("Only TCP targets are supported")
-
         object.__setattr__(self, "host", host)
         object.__setattr__(self, "port", port)
         object.__setattr__(self, "network", network)
-
 
 async def open_target(
     target: Target,
@@ -248,23 +226,18 @@ async def open_target(
 ) -> Tuple[asyncio.StreamReader, asyncio.StreamWriter]:
     if target.network != "tcp":
         raise ValueError("Only TCP targets are supported")
-
     connection = asyncio.open_connection(target.host, target.port)
     if timeout is None:
         return await connection
-
     return await asyncio.wait_for(connection, timeout)
-
 
 async def _safe_close(close: Any) -> None:
     if close is None:
         return
-
     try:
         if inspect.isawaitable(close):
             await close
             return
-
         if callable(close):
             result = close()
             if inspect.isawaitable(result):
@@ -274,7 +247,6 @@ async def _safe_close(close: Any) -> None:
     except Exception:
         pass
 
-
 def tcp_receive(
     reader: asyncio.StreamReader,
     chunk_size: int = DEFAULT_CHUNK_SIZE,
@@ -283,14 +255,11 @@ def tcp_receive(
         chunk_size = int(chunk_size)
     except Exception:
         chunk_size = DEFAULT_CHUNK_SIZE
-
     chunk_size = max(1, chunk_size)
 
     async def receive() -> bytes:
         return await reader.read(chunk_size)
-
     return receive
-
 
 def tcp_send(
     writer: asyncio.StreamWriter,
@@ -300,9 +269,7 @@ def tcp_send(
             return
         writer.write(data)
         await writer.drain()
-
     return send
-
 
 def tcp_close(
     writer: asyncio.StreamWriter,
@@ -313,12 +280,10 @@ def tcp_close(
                 return
             if not writer.is_closing():
                 writer.close()
-            await writer.wait_closed()
+                await writer.wait_closed()
         except Exception:
             pass
-
     return close
-
 
 class Relay:
     def __init__(
@@ -330,7 +295,6 @@ class Relay:
             chunk_size = int(chunk_size)
         except Exception:
             chunk_size = DEFAULT_CHUNK_SIZE
-
         self.chunk_size = max(512, chunk_size)
         self._stats = stats or get_global_stats()
 
@@ -347,11 +311,9 @@ class Relay:
                 raise
             except Exception:
                 break
-
             try:
                 if data is None:
                     break
-
                 if isinstance(data, bytes):
                     pass
                 elif isinstance(data, str):
@@ -363,16 +325,13 @@ class Relay:
                         data = bytes(data)
                     except Exception:
                         break
-
                 if not data:
                     break
-
                 await send(data)
             except asyncio.CancelledError:
                 raise
             except Exception:
                 break
-
             try:
                 add(len(data))
             except Exception:
@@ -396,10 +355,8 @@ class Relay:
             self._pipe(target_receive, client_send, self._stats.add_download),
             name="relay-download",
         )
-
         tasks = (upload_task, download_task)
         cancelled = False
-
         try:
             await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
         except asyncio.CancelledError:
@@ -408,14 +365,12 @@ class Relay:
             for task in tasks:
                 if not task.done():
                     task.cancel()
-
             try:
                 await asyncio.gather(*tasks, return_exceptions=True)
             except asyncio.CancelledError:
                 cancelled = True
             except Exception:
                 pass
-
             try:
                 try:
                     await _safe_close(client_close)
@@ -426,10 +381,8 @@ class Relay:
                     await _safe_close(target_close)
                 except asyncio.CancelledError:
                     cancelled = True
-
             if cancelled:
                 raise asyncio.CancelledError()
-
 
 async def relay_to_target(
     target: Target,
@@ -441,9 +394,7 @@ async def relay_to_target(
     relay: Optional[Relay] = None,
 ) -> None:
     relay = relay or Relay()
-
     target_reader, target_writer = await open_target(target, timeout)
-
     await relay.run(
         client_receive=client_receive,
         client_send=client_send,
