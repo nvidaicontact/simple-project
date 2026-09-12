@@ -1,12 +1,14 @@
 # 🌐 FreeNET
 
-A lightweight, independent, and open-source network gateway built for simplicity, portability, and freedom.
+A lightweight, independent, and open-source network gateway built with a focus on **simplicity, freedom, and portability**.
 
 No heavy panels.  
 No databases.  
-No unnecessary complexity.  
+No unnecessary complexity.
 
-Just a clean, containerized routing engine that does one thing well. 🚀
+Just a clean, containerized routing engine designed to run anywhere. 🚀
+
+**[🇮🇷 فارسی](README-fa.md)**
 
 [![Python](https://img.shields.io/badge/Python-3.10+-blue.svg)](https://www.python.org/)
 [![Docker](https://img.shields.io/badge/Docker-Ready-2496ED.svg)](https://www.docker.com/)
@@ -14,18 +16,18 @@ Just a clean, containerized routing engine that does one thing well. 🚀
 
 ---
 
-## ⚡ Quick Start
+# ⚡ Quick Start
 
 Get FreeNET running in a few simple steps.
 
-### 1. Clone the repository
+## 1. Clone the repository
 
 ```bash
 git clone https://github.com/MHDLabs/FreeNET.git
 cd FreeNET
 ````
 
-### 2. Configure environment variables
+## 2. Configure environment variables
 
 Create a `.env` file:
 
@@ -36,7 +38,7 @@ PORT=8080
 
 `SUBSCRIPTION_TOKEN` is required and must be manually configured.
 
-### 3. Build and run with Docker
+## 3. Build and run with Docker
 
 ```bash
 docker build -t freenet .
@@ -54,15 +56,15 @@ That's it. FreeNET is ready. ✨
 
 # 🎯 What is FreeNET?
 
-FreeNET was created with one simple idea:
+FreeNET was created with a simple idea:
 
-**Networking tools should not become complicated just because they become powerful.**
+**Network tools should not become complicated just because they become powerful.**
 
-Many existing solutions rely on large dashboards, databases, user management systems, and complicated stacks.
+Many existing solutions rely on large dashboards, databases, user management systems, and unnecessary layers.
 
-FreeNET takes another path.
+FreeNET takes another approach.
 
-It is a lightweight FastAPI-based gateway designed to be:
+It is a lightweight FastAPI-based network gateway designed to be:
 
 * Simple to understand
 * Easy to deploy
@@ -84,7 +86,7 @@ Just your infrastructure, your way. 🌍
 
 * 🐳 **Docker First**
 
-  * Runs anywhere Docker runs
+  * Designed from the beginning for container environments
 
 * 🔌 **Multiple Protocol Support**
 
@@ -100,15 +102,15 @@ Just your infrastructure, your way. 🌍
 * 📊 **Built-in Statistics**
 
   * Server uptime tracking
-  * Upload/download traffic statistics
+  * Upload and download traffic statistics
 
 * 🔐 **Environment Based Configuration**
 
-  * No external configuration files required
+  * No complicated configuration files
 
 * 🧩 **Minimal Architecture**
 
-  * No database dependency
+  * No external database dependency
   * Small and readable codebase
 
 ---
@@ -131,12 +133,12 @@ Modern XHTTP transport support using packet-up mode for flexible network environ
 
 # 🏗️ Project Structure
 
-FreeNET intentionally keeps the architecture simple and readable:
+FreeNET intentionally keeps its architecture simple, flat, and readable:
 
-```
+```text
 FreeNET/
-├── main.py                 # FastAPI app, routing, subscription system
-├── core.py                 # Core utilities, relay and statistics
+├── main.py                 # FastAPI application, routing and subscription system
+├── core.py                 # Core utilities, relay logic and statistics
 ├── protocols/
 │   ├── vless.py            # VLESS handler
 │   ├── trojan.py           # Trojan handler
@@ -149,18 +151,18 @@ FreeNET/
 
 # ⚙️ Configuration
 
-FreeNET uses environment variables for configuration.
+FreeNET is configured entirely through environment variables.
 
 | Variable             | Required | Description                              |
 | -------------------- | -------- | ---------------------------------------- |
 | `SUBSCRIPTION_TOKEN` | ✅ Yes    | Access token for `/sub/{token}` endpoint |
-| `VLESS_UUID`         | ❌ No     | Custom VLESS UUID                        |
-| `TROJAN_PASSWORD`    | ❌ No     | Custom Trojan password                   |
+| `VLESS_UUID`         | ❌ No     | Custom UUID for VLESS/XHTTP              |
+| `TROJAN_PASSWORD`    | ❌ No     | Custom password for Trojan               |
 | `PORT`               | ❌ No     | Server listening port (default: `8080`)  |
 
 If `VLESS_UUID` or `TROJAN_PASSWORD` are not provided, FreeNET can generate them automatically.
 
-The subscription token is always manually controlled by the user.
+The subscription token is always controlled by the user and must be configured manually.
 
 ---
 
@@ -170,12 +172,17 @@ FreeNET is platform-independent.
 
 You can deploy it on:
 
-* 🖥️ VPS servers
+* 🖥️ Personal servers
 * ☁️ Cloud platforms
-* 🐳 Docker hosts
-* 🏠 Personal servers
+* 🐳 Any Docker-compatible environment
+* 🏠 Home servers
 
-FreeNET is designed around standard containers, keeping it free from platform limitations and vendor lock-in.
+The goal is simple:
+
+**If Docker runs, FreeNET runs.**
+
+No dependency on a specific provider.
+No vendor lock-in.
 
 ---
 
@@ -183,11 +190,11 @@ FreeNET is designed around standard containers, keeping it free from platform li
 
 The endpoint:
 
-```
+```text
 https://your-domain/sub/YOUR_TOKEN
 ```
 
-returns a Base64 encoded subscription compatible with clients such as:
+returns a Base64 encoded subscription compatible with:
 
 * v2rayNG
 * NekoBox
@@ -200,7 +207,7 @@ The subscription contains:
 2. Supported protocol profiles
 3. Server status information including uptime and traffic statistics
 
-This is a simple configuration delivery system, not a user management panel.
+This is a configuration delivery system, not a user management panel.
 
 ---
 
@@ -208,20 +215,23 @@ This is a simple configuration delivery system, not a user management panel.
 
 ## Why FreeNET?
 
-Because sometimes less is more.
+Because bigger is not always better.
 
-```
+```text
 Simple > Complex
+
 Freedom > Lock-in
+
 Portable > Platform dependent
+
 Readable > Over-engineered
 ```
 
-FreeNET is not trying to become another giant management panel.
+FreeNET is not trying to become another huge management panel.
 
-It is a small tool built around a simple idea:
+It is a small tool built around one idea:
 
-**Give people control over their own infrastructure.**
+**Your infrastructure should stay under your control.**
 
 ---
 
